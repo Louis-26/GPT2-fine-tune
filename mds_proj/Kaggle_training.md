@@ -46,8 +46,7 @@ cp ./latest_code/dataset-metadata.json . # save the configuration file to curren
 kaggle datasets create -p ./latest_code --dir-mode zip # upload the code to Kaggle
 ```
 
-title name can be arbitrary, and I use trial-1
- https://www.kaggle.com/datasets/louis26/trial-1 
+title name can be arbitrary 
 
 ### Case 2: Update the existing code.
 
