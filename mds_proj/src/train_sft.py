@@ -12,11 +12,11 @@ from peft import LoraConfig, get_peft_model, TaskType
 import torch._dynamo.config
 torch._dynamo.config.suppress_errors = True
 
-def train(pretrain, batch_size, exp_name, use_lora, model_type):
+def train(pretrain, batch_size, exp_name, use_lora, model_type, max_steps):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     cfg = get_configs(model_type) # change this line to select different models
-    cfg.max_steps = 200000 // batch_size
+    cfg.max_steps = max_steps if max_steps else 200000 // batch_size
     cfg.batch_size = batch_size
     cfg.pretrain = pretrain
     assert pretrain == "huggingface" # make sure the pretrained model is in the format of huggingface.
@@ -28,13 +28,12 @@ def train(pretrain, batch_size, exp_name, use_lora, model_type):
     if use_lora:
         print(f"🚀 [INFO] Enabling LoRA fine-tuning mode for {model_type}...")
         lora_config = LoraConfig(
-            task_type=TaskType.CAUSAL_LM,
             r=8,
             lora_alpha=32,
             lora_dropout=0.1,
             # Note: Ensure "c_attn" matches the exact name of the attention 
             # projection layer defined in your custom GPT class.
-            target_modules=["c_attn"], 
+            target_modules=["qkv_projection"], 
         )
         # Wrap the original model with the PEFT (LoRA) configuration
         model = get_peft_model(model, lora_config)
@@ -65,9 +64,11 @@ def train(pretrain, batch_size, exp_name, use_lora, model_type):
 @click.option('--batch-size', '-b', default=1, help="Batch size per GPU.")
 @click.option('--exp-name', '-n', default="default", help="Name of the experiment for logging.")
 @click.option('--use-lora', is_flag=True, help="Pass this flag to enable LoRA parameter-efficient fine-tuning.")
-def main(pretrain, batch_size, exp_name, use_lora, model_type):
+@click.option('--max-steps', '-s', type=int, default=None, help="Maximum training steps. If not set, defaults to 200000 // batch_size.")
+
+def main(pretrain, batch_size, exp_name, use_lora, model_type, max_steps):
     torch.manual_seed(1234)
-    train(pretrain, batch_size, exp_name, use_lora, model_type)
+    train(pretrain, batch_size, exp_name, use_lora, model_type, max_steps)
 
 
 if __name__ == "__main__":

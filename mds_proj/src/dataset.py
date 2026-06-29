@@ -134,15 +134,16 @@ class SFTDataset(Dataset):
                  block_size,
                  split='train',
                  max_examples=None,
-                 tokenizer_name='tiktoken/gpt2') -> None:
+                 tokenizer_name='tiktoken/gpt2',
+                 data_dir="./data") -> None:
         super().__init__()
         save = False
-        if os.path.exists(f"sft_{split}.json"):
-            with open(f"./sft_{split}.json") as fp:
+        if os.path.exists(f"{data_dir}/sft_{split}.json"):
+            with open(f"{data_dir}/sft_{split}.json") as fp:
                 dataset_chosen = json.load(fp)
         else:
             save = True
-            dataset = load_dataset("Anthropic/hh-rlhf", split=split, data_dir="helpful-base")
+            dataset = load_dataset("Anthropic/hh-rlhf", split=split, data_dir=data_dir)
 
             # split half for SFT
             torch.manual_seed(123) # for consistent dataset split
@@ -194,13 +195,14 @@ class EYLSFTStaticDataset(Dataset):
                  block_size,
                  split='train',
                  max_examples=None,
-                 tokenizer_name='tiktoken/gpt2') -> None:
+                 tokenizer_name='tiktoken/gpt2',
+                 data_dir="./data") -> None:
         super().__init__()
         if split == "train":
-            with open("./sft_train.json") as fp:
+            with open(f"{data_dir}/sft_train.json") as fp:
                 dataset = json.load(fp)
         else:
-            with open("./sft_test.json") as fp:
+            with open(f"{data_dir}/sft_test.json") as fp:
                 dataset = json.load(fp)
         self.tokens = []
         self.block_size = block_size

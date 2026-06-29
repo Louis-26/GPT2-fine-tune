@@ -66,26 +66,26 @@ class SFTTrainer(Trainer):
         self.cfg = cfg
         self.run_name = f"sft_{cfg.exp_name}_{datetime.now().strftime('%Y%m%d%H%M')}"
         self.device = device
-        assert self.device == 'cuda'
+        # assert self.device == 'cuda'
         self.max_steps = cfg.max_steps
         self.eval_freq = 1
         self.save_freq = 20000
         self.train_dataloader = iter(
             DataLoader(train_dataset,
                        batch_size=cfg.batch_size,
-                       num_workers=6,
+                       num_workers=0,
                        pin_memory=True))
         self.test_dataloader = iter(
             DataLoader(test_dataset,
                        batch_size=cfg.batch_size,
-                       num_workers=6,
+                       num_workers=0,
                        pin_memory=True))
         self.model = model
         self.criterion = CrossEntropyLoss()
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=cfg.lr)
         self.grad_clip = cfg.grad_clip
-        self.dtype = torch.float16
+        self.dtype = torch.float16 if self.device == 'cuda' else torch.bfloat16
 
         self.finetune_method = cfg.finetune_method
 
@@ -104,10 +104,13 @@ class SFTTrainer(Trainer):
             self.model.freeze_weights(self.finetune_method)
         summary(self.model, input_data=torch.ones(1, 1024).long())
 
-        opt_model = torch.compile(self.model)
-        opt_model.to(self.device)
+        self.model.to(self.device)
+        if self.device == 'cuda':
+            opt_model = torch.compile(self.model)
+        else:
+            opt_model = self.model
         writer = SummaryWriter(f'./runs/{self.run_name}/logs', max_queue=40)
-        scaler = GradScaler(enabled=self.dtype != torch.float32)
+        scaler = GradScaler(enabled=(self.dtype != torch.float32 and self.device == 'cuda'))
 
         opt_model.train()
         step = 0
