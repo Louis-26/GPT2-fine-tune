@@ -105,10 +105,7 @@ class SFTTrainer(Trainer):
         summary(self.model, input_data=torch.ones(1, 1024).long())
 
         self.model.to(self.device)
-        if self.device == 'cuda':
-            opt_model = torch.compile(self.model)
-        else:
-            opt_model = self.model
+        opt_model = self.model
         writer = SummaryWriter(f'./runs/{self.run_name}/logs', max_queue=40)
         scaler = GradScaler(enabled=(self.dtype != torch.float32 and self.device == 'cuda'))
 
