@@ -113,6 +113,7 @@ class SFTTrainer(Trainer):
         step = 0
 
         t0 = time.time()
+        total_time=0
         while step < self.max_steps:
             x, y = next(self.train_dataloader)
             x = x.to(self.device)
@@ -137,11 +138,18 @@ class SFTTrainer(Trainer):
             print(
                 f"step {step}, batch loss {round(lossf, 3)}, {round(1.0 / iter_time, 2)} iters/s"
             )
+            with open(f'./runs/{self.run_name}/train_loss.txt', 'a') as f:
+                f.write(f"step {step}, batch loss {round(lossf, 3)}, {round(1.0 / iter_time, 2)} iters/s\n")
+            total_time += iter_time    
             writer.add_scalar('Loss/train/step', lossf, step)
 
             if step != 0 and step % self.save_freq == 0:
                 self.save_states(step)
 
             step += 1
-
+        with open(f'./runs/{self.run_name}/train_loss.txt', 'a') as f:
+            f.write("="*50 + "\n")
+            f.write(f"Total training time: {total_time:.2f} seconds\n")
+            f.write(f"Average time per step: {total_time/step:.4f} seconds\n")
         self.save_states(step, True)
+        writer.close()

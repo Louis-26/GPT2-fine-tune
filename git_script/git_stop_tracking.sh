@@ -40,4 +40,5 @@ while true; do
 		echo "'$FILE_NAME' not found as a file or folder, skipping"
 	fi
 done
-bash gitignore_consolidate.sh
+
+bash git_script/gitignore_consolidate.sh

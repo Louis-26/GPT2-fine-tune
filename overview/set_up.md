@@ -19,6 +19,8 @@ fi
 cd $(git rev-parse --show-toplevel)
 kaggle datasets download jonery/finetuning-dataset -p mds_proj/src/data --unzip && mv mds_proj/src/data/src/* mds_proj/src/data/ && rm -rf mds_proj/src/data/src
 ```
+
+
 ## step 3: run the training code
 ```bash
 cd $(git rev-parse --show-toplevel)/mds_proj/src
