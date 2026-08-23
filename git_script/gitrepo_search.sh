@@ -814,33 +814,109 @@ while :; do
             echo "=== Sync complete ==="
             ;;
         4)
-            # Check whether each repo's git_script/ matches the template.
-            # After updating the outdated ones, they'll typically become UNSTAGED
-            # (because git_script/*.sh files changed on disk) — the user can then
-            # use option 1 or 3 to commit and push those updates.
-            refresh_template || { echo; continue; }
-            scan_outdated_scripts
-            list_uptodate
-            list_outdated
-            if [ "${#OUTDATED_REPOS[@]}" -eq 0 ]; then
+            echo "Fetching the latest template from GitHub for comparison ..."
+            TMP_UPDATER="$(mktemp)"
+            TMP_CLONE_DIR="$(mktemp -d)"
+
+            # Use git clone --depth 1 to bypass private repo curl limitations
+            REPO_URL="https://github.com/Louis-26/git_script_template.git"
+            if ! git clone --quiet --depth=1 "$REPO_URL" "$TMP_CLONE_DIR"; then
+                echo "  !! Fetch failed. Please check your network or repository permissions."
+                rm -f "$TMP_UPDATER"
+                rm -rf "$TMP_CLONE_DIR"
                 continue
             fi
 
-            echo "Enter repos to update (by number above), 'all', or empty to cancel." >&2
-            read -r -p "> " input
-            picks_raw=$(parse_outdated_selection "$input")
-            rc=$?
-            case "$rc" in
-                0) ;;
-                1) echo "Cancelled."; continue ;;
-                2) echo "Invalid syntax."; continue ;;
-                3) echo "Out of range."; continue ;;
-            esac
+            # Copy the specific script we need to execute later
+            if [ -f "$TMP_CLONE_DIR/git_script/git_update_script.sh" ]; then
+                cp "$TMP_CLONE_DIR/git_script/git_update_script.sh" "$TMP_UPDATER"
+            else
+                echo "  !! Error: git_update_script.sh not found in the remote repository."
+                rm -f "$TMP_UPDATER"
+                rm -rf "$TMP_CLONE_DIR"
+                continue
+            fi
 
-            for i in $picks_raw; do
-                do_update_scripts_one "$i"
+            echo "Fetch successful! Comparing local scripts with the remote template ..."
+            echo
+
+            # Generate a fresh global order, but ONLY assign numbers to outdated repos
+            GLOBAL_ORDER=()
+            n=1
+
+            for i in "${!STATUS_REPO[@]}"; do
+                repo="${STATUS_REPO[$i]}"
+                is_outdated=0
+
+                # Check if the local folder is missing, or if its contents differ from the remote
+                if [ ! -d "$repo/git_script" ]; then
+                    is_outdated=1
+                elif ! diff -rq "$TMP_CLONE_DIR/git_script" "$repo/git_script" >/dev/null 2>&1; then
+                    is_outdated=1
+                fi
+
+                if [ "$is_outdated" -eq 1 ]; then
+                    printf "  %-5s %-18s %s\n" "${n}." "(not up-to-date)" "$repo"
+                    GLOBAL_ORDER[$n]="$i"
+                    n=$((n + 1))
+                else
+                    # Do not assign a number, print a dash instead
+                    printf "  %-5s %-18s %s\n" "-" "(up-to-date)" "$repo"
+                fi
             done
-            echo "Script update complete. Use option 1 or 3 to push the changes."
+
+            # Comparison is done, we can now clean up the clone directory
+            rm -rf "$TMP_CLONE_DIR"
+
+            max=$((n - 1))
+
+            # If max is 0, it means no repos were assigned a number (all are up-to-date)
+            if [ "$max" -eq 0 ]; then
+                echo
+                echo "Awesome! All repositories are already up-to-date."
+                rm -f "$TMP_UPDATER"
+                continue
+            fi
+
+            echo
+            echo "Enter the repo numbers to update (e.g., 1, 1-3, all), or press Enter to cancel."
+            read -r -p "> " input
+
+            picks=$(parse_selection "$input" "$max") || {
+                echo "Cancelled."
+                rm -f "$TMP_UPDATER"
+                continue
+            }
+
+            # Loop through each selected repository
+            for idx in $picks; do
+                repo="${STATUS_REPO[$idx]}"
+                echo "--- $repo ---"
+                (
+                    # Cd into the repo root and execute the downloaded script
+                    cd "$repo" || exit 1
+                    echo "  Running remote git_update_script.sh ..."
+                    bash "$TMP_UPDATER"
+                )
+
+                # Refresh status: Since files are overwritten, the repo usually becomes UNSTAGED
+                new_porcelain=$(cd "$repo" && git status --porcelain 2>/dev/null)
+                if [ -n "$new_porcelain" ]; then
+                    old_label="${STATUS_LABEL[$idx]}"
+                    if [[ "$old_label" != *UNSTAGED* ]]; then
+                        if [ "$old_label" = "CLEAN" ]; then
+                            STATUS_LABEL[$idx]="UNSTAGED"
+                        else
+                            STATUS_LABEL[$idx]="${old_label}+UNSTAGED"
+                        fi
+                    fi
+                fi
+                echo
+            done
+
+            # Destroy the temporary script after processing all repos
+            rm -f "$TMP_UPDATER"
+            echo "Script update complete! You can use option 1 or 3 to push the changes."
             ;;
         5|q|Q|"")
             echo "Bye."
