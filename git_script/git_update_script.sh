@@ -8,6 +8,8 @@
 # Any flag you don't provide silently falls back to the default — there are
 # no interactive prompts. This makes the script safe to call from other
 # scripts (like git_search.sh) and keeps bare-no-args invocation fast.
+# Works from a terminal (any cwd inside the repo) and when double-clicked
+# in Explorer.
 #
 # Usage:
 #   git_update_script.sh                              # all defaults
@@ -22,7 +24,18 @@
 
 set -euo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
+# Remember where this script file lives and what it was called with, BEFORE
+# any cd (a relative script path would resolve wrongly afterwards). Both are
+# needed by the self-relocation step in section 0.
+SELF="$(realpath -- "${BASH_SOURCE[0]}")"
+ORIG_ARGS=("$@")
+
+# Work on the repo that contains the current directory. If we're not inside
+# one (e.g. double-clicked and Git Bash started in $HOME), fall back to the
+# repo that contains this script.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null ||
+            (cd "$(dirname -- "$SELF")" && git rev-parse --show-toplevel))"
+cd "$REPO_ROOT"
 
 # -------- defaults --------
 
@@ -105,19 +118,56 @@ if [ ! -d "$SAVE_DIR" ]; then
 fi
 
 ORIGINAL_DIR="$(pwd)"
+TARGET_DIR="$(realpath -m -- "$ORIGINAL_DIR/$FOLDER_NAME")"
+
+# -------- 0. stage dir, and make sure we're not running from inside the target --------
+
+# A relocated copy of this script (see below) reuses the stage dir it was
+# handed via the environment instead of creating a second one.
+if [ -n "${UPDATE_SCRIPT_TMP_DIR:-}" ] && [ -d "$UPDATE_SCRIPT_TMP_DIR" ]; then
+    TMP_DIR="$UPDATE_SCRIPT_TMP_DIR"
+else
+    TMP_DIR="$(mktemp -d "$SAVE_DIR/update_script_XXXXXX")"
+fi
+
+# bash keeps this script file open for as long as it runs, and Windows refuses
+# to rename/move a directory that contains an open file. So when this script
+# lives inside the very folder it is about to replace (the normal case:
+# git_script/git_update_script.sh), the `mv` in section 2 fails with
+# "Permission denied". Fix: copy ourselves into the stage dir and re-exec from
+# there, so nothing inside $FOLDER_NAME is held open anymore. The copy is not
+# inside $FOLDER_NAME, so this branch is not taken a second time.
+case "$SELF" in
+    "$TARGET_DIR"/*)
+        cp -- "$SELF" "$TMP_DIR/self.sh"
+        UPDATE_SCRIPT_TMP_DIR="$TMP_DIR" exec "$BASH" "$TMP_DIR/self.sh" "${ORIG_ARGS[@]}"
+        ;;
+esac
+
+cleanup() {
+    # Delayed, and run from a fresh `bash -c` rather than a subshell: a subshell
+    # would inherit the open handle to self.sh (which lives in $TMP_DIR) and
+    # could keep Windows from deleting the directory.
+    "$BASH" -c 'sleep 1; rm -rf -- "$1"' _ "$TMP_DIR" >/dev/null 2>&1 &
+
+    # If we are the top-level shell of this window (the script was
+    # double-clicked in Explorer, or run from cmd/PowerShell), the window
+    # would vanish the moment we exit. Give the user a chance to read.
+    if [ "${SHLVL:-1}" -le 1 ] && [ -t 0 ]; then
+        read -rp "Press Enter to close..." _ || true
+    fi
+}
+trap cleanup EXIT
 
 echo
 echo "Update plan:"
 echo "  From:   $REPO_URL  (branch: $BRANCH_NAME)"
 echo "  Folder: $FOLDER_NAME"
 echo "  Stage:  $SAVE_DIR"
-echo "  Target: $ORIGINAL_DIR/$FOLDER_NAME"
+echo "  Target: $TARGET_DIR"
 echo
 
-# -------- 1. sparse-checkout the folder into a temp dir --------
-
-TMP_DIR="$(mktemp -d "$SAVE_DIR/update_script_XXXXXX")"
-trap 'rm -rf "$TMP_DIR"' EXIT
+# -------- 1. sparse-checkout the folder into the stage dir --------
 
 cd "$TMP_DIR"
 
@@ -142,8 +192,49 @@ fi
 
 cd "$ORIGINAL_DIR"
 
-rm -rf -- "$ORIGINAL_DIR/$FOLDER_NAME"
-mv -- "$TMP_DIR/$FOLDER_NAME" "$ORIGINAL_DIR/"
+NEW_DIR="$TMP_DIR/$FOLDER_NAME"
+
+if [ ! -d "$TARGET_DIR" ]; then
+    # First install: nothing to replace.
+    mv -- "$NEW_DIR" "$TARGET_DIR"
+
+elif mv -- "$TARGET_DIR" "$TMP_DIR/old_folder" 2>/dev/null; then
+    # Normal case: swap the whole folder in one go.
+    mv -- "$NEW_DIR" "$TARGET_DIR"
+
+else
+    # Windows refuses to rename a folder that some process holds open — usually
+    # a terminal cd'd into it (including the Git Bash window that appears when
+    # you double-click this script inside the folder), or an Explorer window
+    # showing it. Files *inside* such a folder can still be added and deleted,
+    # so replace the contents instead of the folder: copy the new files in
+    # first, then delete whatever is not part of the new version. That order
+    # means nothing goes missing if a step fails halfway.
+    echo "'$FOLDER_NAME' is held open by another program (a terminal cd'd into it, or an Explorer window),"
+    echo "so its contents are being replaced in place instead."
+
+    case "$SELF" in
+        "$TARGET_DIR"/*)
+            # Should not happen (section 0 relocates us), but never overwrite
+            # the script bash is currently reading from.
+            echo "Refusing to overwrite the running script in place. Run it from outside '$FOLDER_NAME'." >&2
+            exit 1
+            ;;
+    esac
+
+    if ! cp -Rf -- "$NEW_DIR/." "$TARGET_DIR/"; then
+        echo "Some files in '$FOLDER_NAME' could not be overwritten — something still has them open." >&2
+        echo "Close it and run again." >&2
+        exit 1
+    fi
+
+    (cd "$TARGET_DIR" && find . -mindepth 1 -depth -print0) |
+    while IFS= read -r -d '' entry; do
+        [ -e "$NEW_DIR/$entry" ] ||
+            rm -rf -- "$TARGET_DIR/$entry" ||
+            echo "Warning: could not delete stale '$FOLDER_NAME/${entry#./}'." >&2
+    done
+fi
 
 echo
-echo "Done! '$FOLDER_NAME' was updated in $ORIGINAL_DIR/$FOLDER_NAME"
+echo "Done! '$FOLDER_NAME' was updated in $TARGET_DIR"

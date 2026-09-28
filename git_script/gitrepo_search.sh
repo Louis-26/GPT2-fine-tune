@@ -461,7 +461,7 @@ do_pull_one() {
 
 # Run the target repo's own git_script/git_push.sh on a specific repo index.
 # Skip repos that are BEHIND (unsafe to push — must pull first) with a notice.
-# Uses the default commit message "update" for every repo.
+# Uses the default commit message "regular update" for every repo.
 do_push_one() {
     local idx="$1"
     local repo="${STATUS_REPO[$idx]}"
@@ -494,7 +494,7 @@ do_push_one() {
     local helper="$repo/git_script/git_push.sh"
     local push_ok=0
     if [ -f "$helper" ]; then
-        (cd "$repo" && echo "  Running git_script/git_push.sh ..." && bash "$helper" "update") && push_ok=1
+        (cd "$repo" && echo "  Running git_script/git_push.sh ..." && bash "$helper" "regular update") && push_ok=1
     else
         echo "  No repo-local git_script/git_push.sh; doing inline add + commit + push."
         (
